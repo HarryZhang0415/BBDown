@@ -126,6 +126,7 @@ public static class Entity
         public required string id;
         public required string dfn;
         public required string baseUrl;
+        public List<string> backupUrls = [];
         public string? res;
         public string? fps;
         public required string codecs;
@@ -156,6 +157,7 @@ public static class Entity
         public required string id;
         public required string dfn;
         public required string baseUrl;
+        public List<string> backupUrls = [];
         public required string codecs;
         public required long bandwith;
         public required int dur;

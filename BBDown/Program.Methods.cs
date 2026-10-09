@@ -359,24 +359,24 @@ internal partial class Program
     /// <param name="audio"></param>
     private static void HandlePcdn(MyOption myOption, Video? selectedVideo, Audio? selectedAudio)
     {
+        //处理PCDN
+        //由于B站已对CDN链接的query参数按CDN签名(如PCDN链接的sign/traceid参数), 直接替换host会导致403
+        //因此优先切换到API返回的非PCDN备用链接
+        if (!myOption.AllowPcdn)
+        {
+            var pcdnReg = PcdnRegex();
+            if (selectedVideo != null && pcdnReg.IsMatch(selectedVideo.baseUrl))
+            {
+                selectedVideo.baseUrl = SelectNonPcdnUrl(selectedVideo.baseUrl, selectedVideo.backupUrls, "视频");
+            }
+            if (selectedAudio != null && pcdnReg.IsMatch(selectedAudio.baseUrl))
+            {
+                selectedAudio.baseUrl = SelectNonPcdnUrl(selectedAudio.baseUrl, selectedAudio.backupUrls, "音频");
+            }
+        }
+
         if (myOption.UposHost == "")
         {
-            //处理PCDN
-            if (!myOption.AllowPcdn)
-            {
-                var pcdnReg = PcdnRegex();
-                if (selectedVideo != null && pcdnReg.IsMatch(selectedVideo.baseUrl))
-                {
-                    LogWarn($"检测到视频流为PCDN, 尝试强制替换为{BACKUP_HOST}……");
-                    selectedVideo.baseUrl = pcdnReg.Replace(selectedVideo.baseUrl, $"://{BACKUP_HOST}/");
-                }
-                if (selectedAudio != null && pcdnReg.IsMatch(selectedAudio.baseUrl))
-                {
-                    LogWarn($"检测到音频流为PCDN, 尝试强制替换为{BACKUP_HOST}……");
-                    selectedAudio.baseUrl = pcdnReg.Replace(selectedAudio.baseUrl, $"://{BACKUP_HOST}/");
-                }
-            }
-
             var akamReg = AkamRegex();
             if (selectedVideo != null && Config.AREA != "" && selectedVideo.baseUrl.Contains("akamaized.net"))
             {
@@ -391,17 +391,40 @@ internal partial class Program
         }
         else
         {
-            if (selectedVideo != null)
+            //由于B站已对CDN链接的query参数按CDN签名(PCDN/mcdn链接替换host会403, 其余域名链接结构不同)
+            //因此仅对upos系域名(*.bilivideo.com)做host替换
+            var pcdnReg = PcdnRegex();
+            if (selectedVideo != null && !pcdnReg.IsMatch(selectedVideo.baseUrl) && selectedVideo.baseUrl.Contains(".bilivideo.com/"))
             {
                 LogWarn($"尝试将视频流强制替换为{myOption.UposHost}……");
                 selectedVideo.baseUrl = UposRegex().Replace(selectedVideo.baseUrl, $"://{myOption.UposHost}/");
             }
-            if (selectedAudio != null)
+            if (selectedAudio != null && !pcdnReg.IsMatch(selectedAudio.baseUrl) && selectedAudio.baseUrl.Contains(".bilivideo.com/"))
             {
                 LogWarn($"尝试将音频流强制替换为{myOption.UposHost}……");
                 selectedAudio.baseUrl = UposRegex().Replace(selectedAudio.baseUrl, $"://{myOption.UposHost}/");
             }
         }
+    }
+
+    /// <summary>
+    /// PCDN链接处理: 优先从备用链接中选取非PCDN链接, 无可用备用链接时保留原链接(以HTTPS下载)
+    /// </summary>
+    /// <param name="currentUrl"></param>
+    /// <param name="backupUrls"></param>
+    /// <param name="type"></param>
+    /// <returns></returns>
+    private static string SelectNonPcdnUrl(string currentUrl, List<string> backupUrls, string type)
+    {
+        var pcdnReg = PcdnRegex();
+        var candidate = backupUrls.FirstOrDefault(u => !pcdnReg.IsMatch(u) && !u.Contains("akamaized.net"));
+        if (!string.IsNullOrEmpty(candidate))
+        {
+            LogWarn($"检测到{type}流为PCDN, 已切换到备用CDN链接");
+            return candidate;
+        }
+        LogWarn($"检测到{type}流为PCDN, 且无可用备用CDN链接, 将保留原链接(请确保以HTTPS协议下载)");
+        return currentUrl;
     }
 
     /// <summary>

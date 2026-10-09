@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using static BBDown.Core.Entity.Entity;
 using static BBDown.Core.Logger;
@@ -12,7 +13,7 @@ using System.Collections.Concurrent;
 
 namespace BBDown;
 
-internal static class BBDownDownloadUtil
+internal static partial class BBDownDownloadUtil
 {
     public class DownloadConfig
     {
@@ -220,7 +221,17 @@ internal static class BBDownDownloadUtil
             return url;
         }
 
+        //PCDN链接(带端口的域名)不支持HTTP协议
+        if (PcdnUrlRegex().IsMatch(url))
+        {
+            LogDebug("对PCDN域名不做处理");
+            return url;
+        }
+
         LogDebug("将https更改为http");
         return url.Replace("https:", "http:");
     }
+
+    [GeneratedRegex("://[^/]+:\\d+/")]
+    private static partial Regex PcdnUrlRegex();
 }
