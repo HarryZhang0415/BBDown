@@ -1,6 +1,9 @@
 ﻿using QRCoder;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using static BBDown.BBDownUtil;
 using static BBDown.Core.Logger;
@@ -17,6 +20,44 @@ internal static class BBDownLoginUtil
     {
         string queryUrl = $"https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={qrcodeKey}&source=main-fe-header";
         return await HTTPUtil.GetWebSourceAsync(queryUrl);
+    }
+
+    /// <summary>
+    /// 从登录回调地址中提取Cookie
+    /// 旧版: 回调地址query中直接携带SESSDATA等字段
+    /// 新版: 回调地址为SSO地址(仅携带ticket等字段), 需要请求该地址并通过Set-Cookie响应头获取
+    /// </summary>
+    private static async Task<string> ExtractLoginCookieAsync(string loginUrl)
+    {
+        // 旧版回调地址, 直接截取query
+        if (GetQueryString("SESSDATA", loginUrl) != "")
+        {
+            return loginUrl[(loginUrl.IndexOf('?') + 1)..].Replace("&", ";").Replace(",", "%2C");
+        }
+
+        // 新版SSO回调地址, 请求并收集Set-Cookie
+        LogDebug("回调地址未携带SESSDATA, 尝试请求回调地址获取Cookie: {0}", loginUrl);
+        CookieContainer cookieContainer = new();
+        using HttpClientHandler handler = new()
+        {
+            CookieContainer = cookieContainer,
+            AllowAutoRedirect = true,
+            AutomaticDecompression = DecompressionMethods.All,
+            ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
+        };
+        using HttpClient client = new(handler) { Timeout = TimeSpan.FromSeconds(30) };
+        using HttpRequestMessage request = new(HttpMethod.Get, loginUrl);
+        request.Headers.TryAddWithoutValidation("User-Agent", HTTPUtil.UserAgent);
+        request.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com/");
+        using HttpResponseMessage response = await client.SendAsync(request);
+        LogDebug("SSO响应状态: {0}", response.StatusCode);
+        List<Cookie> cookies = cookieContainer.GetAllCookies()
+            .GroupBy(c => c.Name)
+            .Select(g => g.First())
+            .ToList();
+        LogDebug("获取到Cookie: {0}", string.Join(", ", cookies.Select(c => c.Name)));
+        // 转义英文逗号 否则部分场景会出问题
+        return string.Join(";", cookies.Select(c => $"{c.Name}={c.Value.Replace(",", "%2C")}"));
     }
 
     public static async Task LoginWEB()
@@ -64,9 +105,16 @@ internal static class BBDownLoginUtil
                 else
                 {
                     string cc = JsonDocument.Parse(w).RootElement.GetProperty("data").GetProperty("url").ToString();
-                    Log("登录成功: SESSDATA=" + GetQueryString("SESSDATA", cc));
-                    //导出cookie, 转义英文逗号 否则部分场景会出问题
-                    await File.WriteAllTextAsync(Path.Combine(Program.APP_DIR, "BBDown.data"), cc[(cc.IndexOf('?') + 1)..].Replace("&", ";").Replace(",", "%2C"));
+                    LogDebug("登录回调地址: {0}", cc);
+                    string cookie = await ExtractLoginCookieAsync(cc);
+                    if (string.IsNullOrWhiteSpace(cookie) || !cookie.Contains("SESSDATA="))
+                    {
+                        LogError("登录成功但未能获取到SESSDATA, 请使用 --debug 查看日志并提交issue");
+                        break;
+                    }
+                    Log("登录成功: SESSDATA=" + GetQueryString("SESSDATA", cookie.Replace(";", "&")));
+                    //导出cookie
+                    await File.WriteAllTextAsync(Path.Combine(Program.APP_DIR, "BBDown.data"), cookie);
                     File.Delete("qrcode.png");
                     break;
                 }

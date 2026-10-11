@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
 using static BBDown.Core.Entity.Entity;
+using static BBDown.Core.Logger;
 using static BBDown.Core.Util.HTTPUtil;
 
 namespace BBDown.Core.Fetcher;
@@ -28,6 +29,20 @@ public partial class NormalInfoFetcher : IFetcher
 
         // 互动视频 1:是 0:否
         var isSteinGate = data.GetProperty("rights").GetProperty("is_stein_gate").GetInt16();
+
+        // 充电专属视频: 当前账号无充电权限时只能获取试看片段
+        try
+        {
+            if (data.TryGetProperty("is_upower_exclusive", out JsonElement upowerExclusive) && upowerExclusive.GetBoolean())
+            {
+                bool upowerPlay = false;
+                if (data.TryGetProperty("is_upower_play", out JsonElement upowerPlayNode))
+                    upowerPlay = upowerPlayNode.GetBoolean();
+                if (!upowerPlay)
+                    LogWarn("该视频为UP主充电专属视频, 当前账号未对该UP主充电, 只能下载试看片段 (大会员无法解锁, 需对UP主充电)");
+            }
+        }
+        catch { }
 
         // 分p信息
         List<Page> pagesInfo = new();
